@@ -1,12 +1,11 @@
 import streamlit as st
 import PyPDF2
 from docx import Document
-import io
 
 
-# -----------------------------
-# Page Configuration
-# -----------------------------
+# ==========================================
+# PAGE CONFIGURATION
+# ==========================================
 
 st.set_page_config(
     page_title="AI Research Assistant",
@@ -15,9 +14,9 @@ st.set_page_config(
 )
 
 
-# -----------------------------
-# Custom Styling
-# -----------------------------
+# ==========================================
+# CUSTOM CSS
+# ==========================================
 
 st.markdown("""
 <style>
@@ -34,43 +33,39 @@ st.markdown("""
     margin-bottom: 25px;
 }
 
-.document-card {
-    padding: 20px;
-    border-radius: 12px;
-    border: 1px solid #ddd;
-    margin-bottom: 15px;
-}
-
 </style>
 """, unsafe_allow_html=True)
 
 
-# -----------------------------
-# Session State
-# -----------------------------
+# ==========================================
+# SESSION STATE
+# ==========================================
 
 if "documents" not in st.session_state:
     st.session_state.documents = []
 
 
-# -----------------------------
-# Document Extraction Functions
-# -----------------------------
+# ==========================================
+# DOCUMENT EXTRACTION
+# ==========================================
 
 def extract_pdf(file):
 
     text = ""
 
     try:
+
         pdf_reader = PyPDF2.PdfReader(file)
 
         for page in pdf_reader.pages:
+
             page_text = page.extract_text()
 
             if page_text:
                 text += page_text + "\n"
 
     except Exception as e:
+
         return f"Error reading PDF: {e}"
 
     return text
@@ -79,6 +74,7 @@ def extract_pdf(file):
 def extract_docx(file):
 
     try:
+
         document = Document(file)
 
         text = []
@@ -86,11 +82,13 @@ def extract_docx(file):
         for paragraph in document.paragraphs:
 
             if paragraph.text.strip():
+
                 text.append(paragraph.text)
 
         return "\n".join(text)
 
     except Exception as e:
+
         return f"Error reading DOCX: {e}"
 
 
@@ -113,36 +111,88 @@ def extract_txt(file):
 
 def extract_text(file):
 
-    file_type = file.name.lower()
+    filename = file.name.lower()
 
-    if file_type.endswith(".pdf"):
+    if filename.endswith(".pdf"):
 
         return extract_pdf(file)
 
-    elif file_type.endswith(".docx"):
+    elif filename.endswith(".docx"):
 
         return extract_docx(file)
 
-    elif file_type.endswith(".txt"):
+    elif filename.endswith(".txt"):
 
         return extract_txt(file)
 
-    else:
-
-        return "Unsupported file type."
+    return "Unsupported file type."
 
 
-# -----------------------------
-# Statistics
-# -----------------------------
+# ==========================================
+# TEXT CLEANING
+# ==========================================
+
+def clean_text(text):
+
+    # Remove unnecessary spaces
+    lines = text.splitlines()
+
+    cleaned_lines = []
+
+    for line in lines:
+
+        line = line.strip()
+
+        if line:
+            cleaned_lines.append(line)
+
+    cleaned_text = "\n".join(cleaned_lines)
+
+    return cleaned_text
+
+
+# ==========================================
+# TEXT CHUNKING
+# ==========================================
+
+def create_chunks(text, chunk_size=1000, overlap=200):
+
+    words = text.split()
+
+    chunks = []
+
+    start = 0
+
+    while start < len(words):
+
+        end = start + chunk_size
+
+        chunk_words = words[start:end]
+
+        chunk = " ".join(chunk_words)
+
+        if chunk.strip():
+
+            chunks.append(chunk)
+
+        # Move forward while keeping overlap
+        start += chunk_size - overlap
+
+    return chunks
+
+
+# ==========================================
+# DOCUMENT STATISTICS
+# ==========================================
 
 def calculate_statistics(text):
 
     words = text.split()
 
     paragraphs = [
-        p for p in text.split("\n")
-        if p.strip()
+        paragraph
+        for paragraph in text.split("\n")
+        if paragraph.strip()
     ]
 
     word_count = len(words)
@@ -151,8 +201,10 @@ def calculate_statistics(text):
 
     paragraph_count = len(paragraphs)
 
-    # Average reading speed
-    reading_time = max(1, round(word_count / 200))
+    reading_time = max(
+        1,
+        round(word_count / 200)
+    )
 
     return {
         "words": word_count,
@@ -162,9 +214,9 @@ def calculate_statistics(text):
     }
 
 
-# -----------------------------
-# Header
-# -----------------------------
+# ==========================================
+# HEADER
+# ==========================================
 
 st.markdown(
     '<div class="main-title">🔬 AI Research Assistant</div>',
@@ -173,37 +225,56 @@ st.markdown(
 
 st.markdown(
     '<div class="subtitle">'
-    'Upload multiple research documents and prepare them for AI-powered analysis.'
+    'Version 2 — Multi-Document Processing & Text Chunking'
     '</div>',
     unsafe_allow_html=True
 )
 
 
-# -----------------------------
-# Sidebar
-# -----------------------------
+# ==========================================
+# SIDEBAR
+# ==========================================
 
 with st.sidebar:
 
     st.header("⚙️ Settings")
 
-    st.write("### Supported Files")
+    st.subheader("📄 Supported Files")
 
-    st.write("📄 PDF")
-    st.write("📝 DOCX")
-    st.write("📃 TXT")
+    st.write("PDF")
+    st.write("DOCX")
+    st.write("TXT")
 
     st.divider()
 
+    st.subheader("🧩 Chunk Settings")
+
+    chunk_size = st.slider(
+        "Words per chunk",
+        min_value=300,
+        max_value=2000,
+        value=1000,
+        step=100
+    )
+
+    overlap = st.slider(
+        "Chunk overlap",
+        min_value=50,
+        max_value=500,
+        value=200,
+        step=50
+    )
+
     st.info(
-        "Version 1 focuses on document upload and text extraction. "
-        "RAG and semantic search will be added in later versions."
+        "Chunking divides large documents into smaller "
+        "sections. This prepares them for semantic search "
+        "and RAG."
     )
 
 
-# -----------------------------
-# Upload Section
-# -----------------------------
+# ==========================================
+# UPLOAD DOCUMENTS
+# ==========================================
 
 st.header("📚 Upload Research Documents")
 
@@ -214,13 +285,16 @@ uploaded_files = st.file_uploader(
 )
 
 
-# -----------------------------
-# Process Documents
-# -----------------------------
+# ==========================================
+# PROCESS DOCUMENTS
+# ==========================================
 
 if uploaded_files:
 
-    if st.button("📥 Process Documents", use_container_width=True):
+    if st.button(
+        "📥 Process Documents",
+        use_container_width=True
+    ):
 
         st.session_state.documents = []
 
@@ -230,29 +304,56 @@ if uploaded_files:
 
         for index, file in enumerate(uploaded_files):
 
-            text = extract_text(file)
+            # Extract text
+            raw_text = extract_text(file)
 
-            statistics = calculate_statistics(text)
+            # Clean text
+            cleaned_text = clean_text(raw_text)
 
+            # Create chunks
+            chunks = create_chunks(
+                cleaned_text,
+                chunk_size,
+                overlap
+            )
+
+            # Calculate statistics
+            statistics = calculate_statistics(
+                cleaned_text
+            )
+
+            # Store document
             document = {
+
                 "name": file.name,
+
                 "type": file.type,
-                "text": text,
+
+                "text": cleaned_text,
+
+                "chunks": chunks,
+
                 "statistics": statistics
+
             }
 
-            st.session_state.documents.append(document)
+            st.session_state.documents.append(
+                document
+            )
 
-            progress.progress((index + 1) / total_files)
+            progress.progress(
+                (index + 1) / total_files
+            )
 
         st.success(
-            f"Successfully processed {total_files} document(s)."
+            f"Successfully processed "
+            f"{total_files} document(s)."
         )
 
 
-# -----------------------------
-# Dashboard
-# -----------------------------
+# ==========================================
+# DASHBOARD
+# ==========================================
 
 if st.session_state.documents:
 
@@ -274,44 +375,52 @@ if st.session_state.documents:
         for doc in documents
     )
 
-    total_paragraphs = sum(
-        doc["statistics"]["paragraphs"]
+    total_chunks = sum(
+        len(doc["chunks"])
         for doc in documents
     )
 
 
+    # ======================================
+    # METRICS
+    # ======================================
+
     col1, col2, col3, col4 = st.columns(4)
 
     with col1:
+
         st.metric(
-            "Documents",
+            "📚 Documents",
             total_documents
         )
 
     with col2:
+
         st.metric(
-            "Total Words",
+            "📝 Total Words",
             f"{total_words:,}"
         )
 
     with col3:
+
         st.metric(
-            "Characters",
-            f"{total_characters:,}"
+            "🧩 Total Chunks",
+            total_chunks
         )
 
     with col4:
+
         st.metric(
-            "Paragraphs",
-            f"{total_paragraphs:,}"
+            "🔤 Characters",
+            f"{total_characters:,}"
         )
 
 
-    # -----------------------------
-    # Document List
-    # -----------------------------
+    # ======================================
+    # DOCUMENTS
+    # ======================================
 
-    st.subheader("📑 Uploaded Documents")
+    st.subheader("📑 Processed Documents")
 
     for index, document in enumerate(documents):
 
@@ -321,79 +430,138 @@ if st.session_state.documents:
             f"📄 {document['name']}"
         ):
 
-            col1, col2, col3 = st.columns(3)
+            col1, col2, col3, col4 = st.columns(4)
 
             with col1:
+
                 st.write(
-                    f"**Words:** {stats['words']:,}"
+                    f"**Words:** "
+                    f"{stats['words']:,}"
                 )
 
             with col2:
+
                 st.write(
-                    f"**Paragraphs:** {stats['paragraphs']:,}"
+                    f"**Paragraphs:** "
+                    f"{stats['paragraphs']:,}"
                 )
 
             with col3:
+
                 st.write(
-                    f"**Reading Time:** "
+                    f"**Chunks:** "
+                    f"{len(document['chunks']):,}"
+                )
+
+            with col4:
+
+                st.write(
+                    f"**Reading:** "
                     f"{stats['reading_time']} min"
                 )
 
+
+            # ==================================
+            # TEXT PREVIEW
+            # ==================================
 
             st.write("### 👀 Text Preview")
 
             preview = document["text"][:3000]
 
-            if preview.strip():
+            st.text_area(
+                "Extracted text",
+                preview,
+                height=200,
+                key=f"text_{index}"
+            )
+
+
+            # ==================================
+            # CHUNK PREVIEW
+            # ==================================
+
+            st.write("### 🧩 Chunk Preview")
+
+            if document["chunks"]:
+
+                selected_chunk = st.selectbox(
+                    "Select a chunk",
+                    range(
+                        len(document["chunks"])
+                    ),
+                    format_func=lambda x:
+                    f"Chunk {x + 1}",
+                    key=f"chunk_select_{index}"
+                )
+
+                chunk_text = document["chunks"][
+                    selected_chunk
+                ]
 
                 st.text_area(
-                    "Extracted text",
-                    preview,
+                    "Chunk content",
+                    chunk_text,
                     height=250,
-                    key=f"preview_{index}"
-                )
-
-            else:
-
-                st.warning(
-                    "No readable text was extracted from this document."
+                    key=f"chunk_text_{index}"
                 )
 
 
-    # -----------------------------
-    # Combined Text
-    # -----------------------------
+# ==========================================
+# CHUNK INFORMATION
+# ==========================================
+
+if st.session_state.documents:
 
     st.divider()
 
-    st.subheader("📚 Combined Research Text")
+    st.header("🧠 How Chunking Works")
 
-    combined_text = "\n\n".join(
-        f"===== {doc['name']} =====\n\n{doc['text']}"
-        for doc in documents
+    st.write(
+        "The application divides each document into "
+        "smaller sections so that later we can search "
+        "the most relevant sections instead of sending "
+        "the entire document to the AI."
     )
 
-    st.text_area(
-        "All documents",
-        combined_text[:10000],
-        height=300
-    )
+    st.code("""
+Document
+    ↓
+Text Extraction
+    ↓
+Text Cleaning
+    ↓
+Text Chunking
+    ↓
+Chunk 1
+Chunk 2
+Chunk 3
+Chunk 4
+    ↓
+Embeddings
+    ↓
+FAISS Vector Search
+    ↓
+RAG
+    ↓
+Gemini
+    """, language="text")
 
 
 else:
 
     st.info(
-        "👆 Upload your research documents above to begin."
+        "👆 Upload documents above to begin."
     )
 
 
-# -----------------------------
-# Footer
-# -----------------------------
+# ==========================================
+# FOOTER
+# ==========================================
 
 st.divider()
 
 st.caption(
-    "AI Research Assistant • Version 1 • "
-    "Multi-Document Processing"
+    "AI Research Assistant • Version 2 • "
+    "Document Chunking"
 )
