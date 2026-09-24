@@ -1,6 +1,10 @@
 import streamlit as st
 import PyPDF2
 from docx import Document
+import numpy as np
+import faiss
+
+from sentence_transformers import SentenceTransformer
 
 
 # ==========================================
@@ -15,34 +19,34 @@ st.set_page_config(
 
 
 # ==========================================
-# CUSTOM CSS
-# ==========================================
-
-st.markdown("""
-<style>
-
-.main-title {
-    font-size: 42px;
-    font-weight: 700;
-    margin-bottom: 5px;
-}
-
-.subtitle {
-    font-size: 18px;
-    color: #666;
-    margin-bottom: 25px;
-}
-
-</style>
-""", unsafe_allow_html=True)
-
-
-# ==========================================
 # SESSION STATE
 # ==========================================
 
 if "documents" not in st.session_state:
     st.session_state.documents = []
+
+if "chunks" not in st.session_state:
+    st.session_state.chunks = []
+
+if "index" not in st.session_state:
+    st.session_state.index = None
+
+if "search_results" not in st.session_state:
+    st.session_state.search_results = []
+
+
+# ==========================================
+# LOAD EMBEDDING MODEL
+# ==========================================
+
+@st.cache_resource
+def load_embedding_model():
+
+    model = SentenceTransformer(
+        "all-MiniLM-L6-v2"
+    )
+
+    return model
 
 
 # ==========================================
@@ -62,6 +66,7 @@ def extract_pdf(file):
             page_text = page.extract_text()
 
             if page_text:
+
                 text += page_text + "\n"
 
     except Exception as e:
@@ -102,7 +107,10 @@ def extract_txt(file):
 
     except UnicodeDecodeError:
 
-        return "Unable to read this TXT file. Please use UTF-8 encoding."
+        return (
+            "Unable to read this TXT file. "
+            "Please use UTF-8 encoding."
+        )
 
     except Exception as e:
 
@@ -134,7 +142,6 @@ def extract_text(file):
 
 def clean_text(text):
 
-    # Remove unnecessary spaces
     lines = text.splitlines()
 
     cleaned_lines = []
@@ -144,24 +151,29 @@ def clean_text(text):
         line = line.strip()
 
         if line:
+
             cleaned_lines.append(line)
 
-    cleaned_text = "\n".join(cleaned_lines)
-
-    return cleaned_text
+    return "\n".join(cleaned_lines)
 
 
 # ==========================================
 # TEXT CHUNKING
 # ==========================================
 
-def create_chunks(text, chunk_size=1000, overlap=200):
+def create_chunks(
+    text,
+    chunk_size=1000,
+    overlap=200
+):
 
     words = text.split()
 
     chunks = []
 
     start = 0
+
+    step = chunk_size - overlap
 
     while start < len(words):
 
@@ -175,8 +187,7 @@ def create_chunks(text, chunk_size=1000, overlap=200):
 
             chunks.append(chunk)
 
-        # Move forward while keeping overlap
-        start += chunk_size - overlap
+        start += step
 
     return chunks
 
@@ -190,28 +201,101 @@ def calculate_statistics(text):
     words = text.split()
 
     paragraphs = [
-        paragraph
-        for paragraph in text.split("\n")
-        if paragraph.strip()
+        p
+        for p in text.split("\n")
+        if p.strip()
     ]
 
-    word_count = len(words)
+    return {
+        "words": len(words),
+        "characters": len(text),
+        "paragraphs": len(paragraphs),
+        "reading_time": max(
+            1,
+            round(len(words) / 200)
+        )
+    }
 
-    character_count = len(text)
 
-    paragraph_count = len(paragraphs)
+# ==========================================
+# CREATE EMBEDDINGS
+# ==========================================
 
-    reading_time = max(
-        1,
-        round(word_count / 200)
+def create_embeddings(chunks, model):
+
+    embeddings = model.encode(
+        chunks,
+        show_progress_bar=False,
+        convert_to_numpy=True
     )
 
-    return {
-        "words": word_count,
-        "characters": character_count,
-        "paragraphs": paragraph_count,
-        "reading_time": reading_time
-    }
+    embeddings = embeddings.astype(
+        "float32"
+    )
+
+    return embeddings
+
+
+# ==========================================
+# CREATE FAISS INDEX
+# ==========================================
+
+def create_faiss_index(embeddings):
+
+    dimension = embeddings.shape[1]
+
+    index = faiss.IndexFlatL2(
+        dimension
+    )
+
+    index.add(embeddings)
+
+    return index
+
+
+# ==========================================
+# SEMANTIC SEARCH
+# ==========================================
+
+def semantic_search(
+    query,
+    model,
+    index,
+    chunks,
+    top_k=5
+):
+
+    query_embedding = model.encode(
+        [query],
+        convert_to_numpy=True
+    )
+
+    query_embedding = query_embedding.astype(
+        "float32"
+    )
+
+    distances, indices = index.search(
+        query_embedding,
+        min(top_k, len(chunks))
+    )
+
+    results = []
+
+    for distance, index_number in zip(
+        distances[0],
+        indices[0]
+    ):
+
+        if index_number == -1:
+            continue
+
+        results.append({
+            "chunk": chunks[index_number],
+            "distance": float(distance),
+            "chunk_number": index_number + 1
+        })
+
+    return results
 
 
 # ==========================================
@@ -219,15 +303,19 @@ def calculate_statistics(text):
 # ==========================================
 
 st.markdown(
-    '<div class="main-title">🔬 AI Research Assistant</div>',
+    """
+    <h1>🔬 AI Research Assistant</h1>
+    """,
     unsafe_allow_html=True
 )
 
 st.markdown(
-    '<div class="subtitle">'
-    'Version 2 — Multi-Document Processing & Text Chunking'
-    '</div>',
-    unsafe_allow_html=True
+    """
+    ### Version 3 — Embeddings + FAISS Semantic Search
+
+    Upload research documents and search them using
+    meaning instead of exact keywords.
+    """
 )
 
 
@@ -251,29 +339,40 @@ with st.sidebar:
 
     chunk_size = st.slider(
         "Words per chunk",
-        min_value=300,
-        max_value=2000,
-        value=1000,
-        step=100
+        300,
+        2000,
+        1000,
+        100
     )
 
     overlap = st.slider(
         "Chunk overlap",
-        min_value=50,
-        max_value=500,
-        value=200,
-        step=50
+        50,
+        500,
+        200,
+        50
+    )
+
+    st.divider()
+
+    st.subheader("🔎 Search Settings")
+
+    top_k = st.slider(
+        "Results to retrieve",
+        1,
+        10,
+        5
     )
 
     st.info(
-        "Chunking divides large documents into smaller "
-        "sections. This prepares them for semantic search "
-        "and RAG."
+        "Version 3 uses Sentence Transformers "
+        "to create embeddings and FAISS to "
+        "perform semantic search."
     )
 
 
 # ==========================================
-# UPLOAD DOCUMENTS
+# UPLOAD
 # ==========================================
 
 st.header("📚 Upload Research Documents")
@@ -292,63 +391,128 @@ uploaded_files = st.file_uploader(
 if uploaded_files:
 
     if st.button(
-        "📥 Process Documents",
+        "🚀 Process Documents",
         use_container_width=True
     ):
 
         st.session_state.documents = []
+        st.session_state.chunks = []
+        st.session_state.index = None
+        st.session_state.search_results = []
 
         progress = st.progress(0)
 
+        all_chunks = []
+
         total_files = len(uploaded_files)
 
-        for index, file in enumerate(uploaded_files):
+        for file_number, file in enumerate(
+            uploaded_files
+        ):
 
             # Extract text
             raw_text = extract_text(file)
 
             # Clean text
-            cleaned_text = clean_text(raw_text)
+            cleaned_text = clean_text(
+                raw_text
+            )
 
             # Create chunks
-            chunks = create_chunks(
+            document_chunks = create_chunks(
                 cleaned_text,
                 chunk_size,
                 overlap
             )
 
-            # Calculate statistics
+            # Statistics
             statistics = calculate_statistics(
                 cleaned_text
             )
 
             # Store document
             document = {
-
                 "name": file.name,
-
                 "type": file.type,
-
                 "text": cleaned_text,
-
-                "chunks": chunks,
-
+                "chunks": document_chunks,
                 "statistics": statistics
-
             }
 
             st.session_state.documents.append(
                 document
             )
 
+            # Add document chunks
+            for chunk_number, chunk in enumerate(
+                document_chunks
+            ):
+
+                all_chunks.append({
+                    "text": chunk,
+                    "document": file.name,
+                    "chunk_number": chunk_number + 1
+                })
+
             progress.progress(
-                (index + 1) / total_files
+                (file_number + 1) / total_files
             )
 
-        st.success(
-            f"Successfully processed "
-            f"{total_files} document(s)."
-        )
+
+        # ======================================
+        # CREATE EMBEDDINGS
+        # ======================================
+
+        if all_chunks:
+
+            with st.spinner(
+                "🧠 Creating embeddings..."
+            ):
+
+                model = load_embedding_model()
+
+                chunk_texts = [
+                    item["text"]
+                    for item in all_chunks
+                ]
+
+                embeddings = create_embeddings(
+                    chunk_texts,
+                    model
+                )
+
+
+            # ==================================
+            # CREATE FAISS DATABASE
+            # ==================================
+
+            with st.spinner(
+                "🔎 Building FAISS vector database..."
+            ):
+
+                index = create_faiss_index(
+                    embeddings
+                )
+
+                st.session_state.chunks = (
+                    all_chunks
+                )
+
+                st.session_state.index = index
+
+
+            st.success(
+                f"Successfully processed "
+                f"{total_files} document(s) and "
+                f"created {len(all_chunks)} chunks."
+            )
+
+        else:
+
+            st.warning(
+                "No readable text was found "
+                "in the uploaded documents."
+            )
 
 
 # ==========================================
@@ -370,22 +534,12 @@ if st.session_state.documents:
         for doc in documents
     )
 
-    total_characters = sum(
-        doc["statistics"]["characters"]
-        for doc in documents
-    )
-
-    total_chunks = sum(
-        len(doc["chunks"])
-        for doc in documents
+    total_chunks = len(
+        st.session_state.chunks
     )
 
 
-    # ======================================
-    # METRICS
-    # ======================================
-
-    col1, col2, col3, col4 = st.columns(4)
+    col1, col2, col3 = st.columns(3)
 
     with col1:
 
@@ -408,21 +562,18 @@ if st.session_state.documents:
             total_chunks
         )
 
-    with col4:
-
-        st.metric(
-            "🔤 Characters",
-            f"{total_characters:,}"
-        )
-
 
     # ======================================
-    # DOCUMENTS
+    # DOCUMENT DETAILS
     # ======================================
 
-    st.subheader("📑 Processed Documents")
+    st.subheader(
+        "📑 Processed Documents"
+    )
 
-    for index, document in enumerate(documents):
+    for index, document in enumerate(
+        documents
+    ):
 
         stats = document["statistics"]
 
@@ -433,99 +584,131 @@ if st.session_state.documents:
             col1, col2, col3, col4 = st.columns(4)
 
             with col1:
-
                 st.write(
                     f"**Words:** "
                     f"{stats['words']:,}"
                 )
 
             with col2:
-
                 st.write(
                     f"**Paragraphs:** "
                     f"{stats['paragraphs']:,}"
                 )
 
             with col3:
-
                 st.write(
                     f"**Chunks:** "
                     f"{len(document['chunks']):,}"
                 )
 
             with col4:
-
                 st.write(
                     f"**Reading:** "
                     f"{stats['reading_time']} min"
                 )
 
 
-            # ==================================
-            # TEXT PREVIEW
-            # ==================================
-
-            st.write("### 👀 Text Preview")
-
-            preview = document["text"][:3000]
-
-            st.text_area(
-                "Extracted text",
-                preview,
-                height=200,
-                key=f"text_{index}"
-            )
-
-
-            # ==================================
-            # CHUNK PREVIEW
-            # ==================================
-
-            st.write("### 🧩 Chunk Preview")
-
-            if document["chunks"]:
-
-                selected_chunk = st.selectbox(
-                    "Select a chunk",
-                    range(
-                        len(document["chunks"])
-                    ),
-                    format_func=lambda x:
-                    f"Chunk {x + 1}",
-                    key=f"chunk_select_{index}"
-                )
-
-                chunk_text = document["chunks"][
-                    selected_chunk
-                ]
-
-                st.text_area(
-                    "Chunk content",
-                    chunk_text,
-                    height=250,
-                    key=f"chunk_text_{index}"
-                )
-
-
 # ==========================================
-# CHUNK INFORMATION
+# SEMANTIC SEARCH
 # ==========================================
 
-if st.session_state.documents:
+if st.session_state.index is not None:
 
     st.divider()
 
-    st.header("🧠 How Chunking Works")
+    st.header("🔎 Semantic Document Search")
 
     st.write(
-        "The application divides each document into "
-        "smaller sections so that later we can search "
-        "the most relevant sections instead of sending "
-        "the entire document to the AI."
+        "Ask a question about your documents. "
+        "The system searches by meaning rather than "
+        "only matching exact words."
     )
 
-    st.code("""
-Document
+    query = st.text_input(
+        "Enter your research question",
+        placeholder=(
+            "Example: What are the main applications "
+            "of artificial intelligence?"
+        )
+    )
+
+
+    if st.button(
+        "🔍 Search Documents",
+        use_container_width=True
+    ):
+
+        if not query.strip():
+
+            st.warning(
+                "Please enter a question."
+            )
+
+        else:
+
+            with st.spinner(
+                "🔎 Searching relevant sections..."
+            ):
+
+                model = load_embedding_model()
+
+                results = semantic_search(
+                    query,
+                    model,
+                    st.session_state.index,
+                    st.session_state.chunks,
+                    top_k
+                )
+
+                st.session_state.search_results = (
+                    results
+                )
+
+
+# ==========================================
+# SEARCH RESULTS
+# ==========================================
+
+if st.session_state.search_results:
+
+    st.divider()
+
+    st.header("📌 Relevant Document Sections")
+
+    for number, result in enumerate(
+        st.session_state.search_results,
+        start=1
+    ):
+
+        st.subheader(
+            f"Result {number}"
+        )
+
+        st.caption(
+            f"Document: "
+            f"{result['chunk']['document']} | "
+            f"Chunk: "
+            f"{result['chunk']['chunk_number']} | "
+            f"Distance: "
+            f"{result['distance']:.4f}"
+        )
+
+        st.write(
+            result["chunk"]["text"]
+        )
+
+
+# ==========================================
+# HOW IT WORKS
+# ==========================================
+
+st.divider()
+
+st.header("🧠 How Version 3 Works")
+
+st.code(
+"""
+Documents
     ↓
 Text Extraction
     ↓
@@ -533,26 +716,22 @@ Text Cleaning
     ↓
 Text Chunking
     ↓
-Chunk 1
-Chunk 2
-Chunk 3
-Chunk 4
+Sentence Transformer
     ↓
 Embeddings
     ↓
-FAISS Vector Search
+FAISS Vector Database
     ↓
-RAG
+User Question
     ↓
-Gemini
-    """, language="text")
-
-
-else:
-
-    st.info(
-        "👆 Upload documents above to begin."
-    )
+Question Embedding
+    ↓
+Semantic Search
+    ↓
+Relevant Chunks
+""",
+language="text"
+)
 
 
 # ==========================================
@@ -562,6 +741,6 @@ else:
 st.divider()
 
 st.caption(
-    "AI Research Assistant • Version 2 • "
-    "Document Chunking"
+    "AI Research Assistant • Version 3 • "
+    "Embeddings + FAISS"
 )
