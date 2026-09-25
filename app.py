@@ -226,12 +226,11 @@ def create_embeddings(chunks, model):
     embeddings = model.encode(
         chunks,
         show_progress_bar=False,
-        convert_to_numpy=True
+        convert_to_numpy=True,
+        normalize_embeddings=True
     )
 
-    embeddings = embeddings.astype(
-        "float32"
-    )
+    embeddings = embeddings.astype("float32")
 
     return embeddings
 
@@ -244,7 +243,9 @@ def create_faiss_index(embeddings):
 
     dimension = embeddings.shape[1]
 
-    index = faiss.IndexFlatL2(
+    # Inner Product on normalized vectors
+    # is equivalent to cosine similarity
+    index = faiss.IndexFlatIP(
         dimension
     )
 
@@ -267,22 +268,23 @@ def semantic_search(
 
     query_embedding = model.encode(
         [query],
-        convert_to_numpy=True
+        convert_to_numpy=True,
+        normalize_embeddings=True
     )
 
     query_embedding = query_embedding.astype(
         "float32"
     )
 
-    distances, indices = index.search(
+    similarities, indices = index.search(
         query_embedding,
         min(top_k, len(chunks))
     )
 
     results = []
 
-    for distance, index_number in zip(
-        distances[0],
+    for similarity, index_number in zip(
+        similarities[0],
         indices[0]
     ):
 
@@ -291,7 +293,7 @@ def semantic_search(
 
         results.append({
             "chunk": chunks[index_number],
-            "distance": float(distance),
+            "similarity": float(similarity),
             "chunk_number": index_number + 1
         })
 
@@ -684,14 +686,15 @@ if st.session_state.search_results:
             f"Result {number}"
         )
 
-        st.caption(
-            f"Document: "
-            f"{result['chunk']['document']} | "
-            f"Chunk: "
-            f"{result['chunk']['chunk_number']} | "
-            f"Distance: "
-            f"{result['distance']:.4f}"
-        )
+similarity = result["similarity"]
+
+relevance = similarity * 100
+
+st.caption(
+    f"📄 Document: {result['chunk']['document']} | "
+    f"🧩 Chunk: {result['chunk']['chunk_number']} | "
+    f"🎯 Relevance: {relevance:.1f}%"
+)
 
         st.write(
             result["chunk"]["text"]
