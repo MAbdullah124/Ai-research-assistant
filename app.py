@@ -3,7 +3,6 @@ import PyPDF2
 from docx import Document
 import numpy as np
 import faiss
-
 from sentence_transformers import SentenceTransformer
 
 
@@ -163,8 +162,8 @@ def clean_text(text):
 
 def create_chunks(
     text,
-    chunk_size=1000,
-    overlap=200
+    chunk_size=500,
+    overlap=100
 ):
 
     words = text.split()
@@ -245,6 +244,7 @@ def create_faiss_index(embeddings):
 
     # Inner Product on normalized vectors
     # is equivalent to cosine similarity
+
     index = faiss.IndexFlatIP(
         dimension
     )
@@ -289,6 +289,7 @@ def semantic_search(
     ):
 
         if index_number == -1:
+
             continue
 
         results.append({
@@ -343,7 +344,7 @@ with st.sidebar:
         "Words per chunk",
         300,
         2000,
-        1000,
+        500,
         100
     )
 
@@ -351,7 +352,7 @@ with st.sidebar:
         "Chunk overlap",
         50,
         500,
-        200,
+        100,
         50
     )
 
@@ -397,6 +398,8 @@ if uploaded_files:
         use_container_width=True
     ):
 
+        # Reset previous data
+
         st.session_state.documents = []
         st.session_state.chunks = []
         st.session_state.index = None
@@ -412,27 +415,42 @@ if uploaded_files:
             uploaded_files
         ):
 
+            # ----------------------------------
             # Extract text
+            # ----------------------------------
+
             raw_text = extract_text(file)
 
+            # ----------------------------------
             # Clean text
+            # ----------------------------------
+
             cleaned_text = clean_text(
                 raw_text
             )
 
+            # ----------------------------------
             # Create chunks
+            # ----------------------------------
+
             document_chunks = create_chunks(
                 cleaned_text,
                 chunk_size,
                 overlap
             )
 
+            # ----------------------------------
             # Statistics
+            # ----------------------------------
+
             statistics = calculate_statistics(
                 cleaned_text
             )
 
+            # ----------------------------------
             # Store document
+            # ----------------------------------
+
             document = {
                 "name": file.name,
                 "type": file.type,
@@ -445,7 +463,10 @@ if uploaded_files:
                 document
             )
 
-            # Add document chunks
+            # ----------------------------------
+            # Add chunks
+            # ----------------------------------
+
             for chunk_number, chunk in enumerate(
                 document_chunks
             ):
@@ -459,7 +480,6 @@ if uploaded_files:
             progress.progress(
                 (file_number + 1) / total_files
             )
-
 
         # ======================================
         # CREATE EMBEDDINGS
@@ -483,7 +503,6 @@ if uploaded_files:
                     model
                 )
 
-
             # ==================================
             # CREATE FAISS DATABASE
             # ==================================
@@ -501,7 +520,6 @@ if uploaded_files:
                 )
 
                 st.session_state.index = index
-
 
             st.success(
                 f"Successfully processed "
@@ -540,7 +558,6 @@ if st.session_state.documents:
         st.session_state.chunks
     )
 
-
     col1, col2, col3 = st.columns(3)
 
     with col1:
@@ -564,7 +581,6 @@ if st.session_state.documents:
             total_chunks
         )
 
-
     # ======================================
     # DOCUMENT DETAILS
     # ======================================
@@ -573,9 +589,7 @@ if st.session_state.documents:
         "📑 Processed Documents"
     )
 
-    for index, document in enumerate(
-        documents
-    ):
+    for document in documents:
 
         stats = document["statistics"]
 
@@ -586,24 +600,28 @@ if st.session_state.documents:
             col1, col2, col3, col4 = st.columns(4)
 
             with col1:
+
                 st.write(
                     f"**Words:** "
                     f"{stats['words']:,}"
                 )
 
             with col2:
+
                 st.write(
                     f"**Paragraphs:** "
                     f"{stats['paragraphs']:,}"
                 )
 
             with col3:
+
                 st.write(
                     f"**Chunks:** "
                     f"{len(document['chunks']):,}"
                 )
 
             with col4:
+
                 st.write(
                     f"**Reading:** "
                     f"{stats['reading_time']} min"
@@ -633,7 +651,6 @@ if st.session_state.index is not None:
             "of artificial intelligence?"
         )
     )
-
 
     if st.button(
         "🔍 Search Documents",
@@ -686,19 +703,21 @@ if st.session_state.search_results:
             f"Result {number}"
         )
 
-similarity = result["similarity"]
+        similarity = result["similarity"]
 
-relevance = similarity * 100
+        relevance = similarity * 100
 
-st.caption(
-    f"📄 Document: {result['chunk']['document']} | "
-    f"🧩 Chunk: {result['chunk']['chunk_number']} | "
-    f"🎯 Relevance: {relevance:.1f}%"
-)
+        st.caption(
+            f"📄 Document: {result['chunk']['document']} | "
+            f"🧩 Chunk: {result['chunk']['chunk_number']} | "
+            f"🎯 Relevance: {relevance:.1f}%"
+        )
 
         st.write(
             result["chunk"]["text"]
         )
+
+        st.divider()
 
 
 # ==========================================
@@ -710,7 +729,7 @@ st.divider()
 st.header("🧠 How Version 3 Works")
 
 st.code(
-"""
+    """
 Documents
     ↓
 Text Extraction
@@ -733,7 +752,7 @@ Semantic Search
     ↓
 Relevant Chunks
 """,
-language="text"
+    language="text"
 )
 
 
